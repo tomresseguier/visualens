@@ -9,10 +9,9 @@ import astropy.units as u
 from astropy.table import Table
 from astropy.io import fits
 from astropy.wcs import WCS
-import subprocess
 from ...utils.utils_astro.utils_general import world_to_relative
-from ...utils.utils_astro.get_cosmology import get_cosmo
-cosmo = get_cosmo()
+from ...utils.utils_astro.get_default_cosmology import get_default_cosmology
+cosmo = get_default_cosmology()
 
 
 
@@ -406,7 +405,7 @@ def make_single_sample_best_file(lt, sample_index) :
     """ Copy the optimized redshift info """
     best_str += 'image\n'
     for l in lt.param_best['image']['z_m_limit'] :
-        best_str += f'\tz_m_limit  {' '.join(str(item) for item in l)}\n'
+        best_str += f'\tz_m_limit  {" ".join(str(item) for item in l)}\n'
     best_str += '\tend\n'
     
     """ Match cosmology to param file """
@@ -548,66 +547,6 @@ def extract_magnification_from_dist(dist_path) :
     columns = ['ID', 'X', 'Y', 'R', 'EPS', 'TAU', 'AMP', 'E_AMP', 'DMAG', 'TIME[days]', 'DTIME', 'PARITY']
     table_df = pd.read_csv(StringIO(table_text), sep='\s+', names=columns)
     return table_df
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-###############################################################################
-# UNUSED. Not ideal as relies on running Lenstool
-###############################################################################
-def get_lenstool_WCS(param_file_path) :
-    param_file = pylenstool.lenstool_param_file(param_file_path)
-    ref = param_file.get_ref()
-    
-    empty_param_str = "runmode\n\treference 3 " + ref[0] + " " + ref[1] + "\n\tsource 0\n\tmass 4 1000 0.556000 mass.fits\n\tend\npotentiel P01\n\tprofile 81\n\tx_centre 0.0\n\ty_centre 0.0\n\tz_lens 1.\n\tellipticite 0.0\n\tangle_pos 0.0\n\tcore_radius_kpc 10\n\tcut_radius_kpc 1500\n\tv_disp 600\n\tidentity P01\n\tend\nfini"
-    
-    temp_dir = os.path.join( os.path.dirname(param_file_path), 'TEMP/' )
-    os.mkdir(temp_dir)
-    empty_param_path = os.path.join(temp_dir, 'temp.par')
-    with open(empty_param_path, 'w') as file :
-        file.write(empty_param_str)
-    
-    cwd = os.getcwd()
-    os.chdir(temp_dir)
-    subprocess.run('conda activate Planck_bullet_cluster', shell=True)
-    subprocess.run('lenstool temp.par -n', shell=True)
-    with fits.open('./' + 'mass.fits') as hdulist :
-        lenstool_WCS = WCS(hdulist[0].header)
-    os.chdir(cwd)
-    shutil.rmtree(temp_dir)
-    
-    return lenstool_WCS
 
 
 

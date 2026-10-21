@@ -1,5 +1,20 @@
+import os
+
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
+
+
+def derived_path(path, suffix_before_ext):
+    """Return ``path`` with ``suffix_before_ext`` inserted before the file extension."""
+    base, ext = os.path.splitext(path)
+    return f"{base}{suffix_before_ext}{ext}"
+
+
+def hst_wht_fits_path(sci_fits_path):
+    """Path to the HST weight map paired with a ``*_sci.fits`` science image."""
+    if len(sci_fits_path) >= 8 and sci_fits_path.endswith('sci.fits'):
+        return f"{sci_fits_path[:-8]}wht.fits"
+    return None
 
 
 

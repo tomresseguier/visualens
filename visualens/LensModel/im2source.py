@@ -14,7 +14,7 @@ def start_im2source(self) :
     self._initial_ngrid_value = self.lt.G.ngrid
     self.lt.set_grid(50, 0)
     
-    self.transform_coords_radec = make_image_to_source(self.dx_map, self.dy_map, self.dmap_wcs)
+    self.transform_coords_radec = make_image_to_source(self.alpha[0], self.alpha[1], self._maps_wcs)
     
     def transform_coords(x, y) :
         ra, dec = self.image.image_to_world(x, y)
@@ -55,10 +55,10 @@ def start_im2source(self) :
                 #if int( importlib.metadata.version('lenstool').split('.')[1] )>=6 :
                     ### For Lenstool version 8.6.3 ###
                 #print(str(ra_source)[3:], str(dec_source)[3:])
-                source = Table( rows=[('test', ra_source, dec_source, 1, 1, 0, self.lt_z, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
+                source = Table( rows=[('test', ra_source, dec_source, 1, 1, 0, self.z_source, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
                 #else :
                     ### For Lenstool version ?? ###
-                    #source = Table( rows=[('test', xr_source, yr_source, 1, 1, 0, self.lt_z, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
+                    #source = Table( rows=[('test', xr_source, yr_source, 1, 1, 0, self.z_source, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
                 
                 self.lt.set_sources(source)
                 self.lt.e_lensing()

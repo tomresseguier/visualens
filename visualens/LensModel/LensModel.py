@@ -1,12 +1,15 @@
 import os
 import glob
 import shutil
+from webbrowser import get
 import numpy as np
 from matplotlib import pyplot as plt
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
+from astropy import constants as astro_constants
+from astropy.cosmology import FlatLambdaCDM
 from tqdm import tqdm
 import warnings
 import gc
@@ -29,6 +32,7 @@ except ImportError :
 
 ###############################################################################
 from ..utils.utils_astro.utils_general import world_to_relative, relative_to_world
+from ..utils.utils_astro.utils_WCS import get_ImageItem_projected_onto_reference
 from ..utils.utils_plots.plot_utils_general import plot_corner
 from ..utils.utils_general.utils_general import extract_line
 from ..utils.utils_general.sort_points import break_curves
@@ -39,10 +43,8 @@ from .utils.utils_general import export_thumbnails, get_lenstool_file_path, impo
 from .utils.utils_multiple_images import import_multiple_images
 from .utils.param_extractors import read_potfile, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file, write_single_sample_best_file
 from ..utils.utils_Qt.utils_general import transform_rectangle
-
-from .utils.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
-                                                                                                 # and are therefore dependent on my own install.
-
+from ..utils.utils_Qt.custom_colormaps import get_colormap
+from ..utils.utils_astro.get_default_cosmology import get_default_cosmology
 
 
 
@@ -63,6 +65,12 @@ class LensModel :
         self.critical_curve_plot = None
         self.caustic_curve_plot = None
         self.curves = None
+        self.current_map_ImageItem = None
+        self.map_histogram = None
+        self._map_histogram_toggle_btn = None
+        self.map_cmap = 'viridis'
+        self.map_opacity = 0.6
+        self.magnification_abs = False
         self._compute_predictions = compute_predictions
         self.verbose = verbose
         self.has_run = False
@@ -238,9 +246,6 @@ class LensModel :
         self.previous_state_current_ROI = None
         self.LENSTRONOMY_fixed_source_kwargs = []
         
-        # load maps if some have been saved to save compute time
-        self.load_saved_maps()
-        
         # compute sources and images from multiple images
         if self.mult is not None and self.lt is not None and compute_predictions :
             self.add_lensing_columns(cat=self.mult.cat)
@@ -249,7 +254,27 @@ class LensModel :
         # read burnin and chires files
         self.read_burnin()
         self.read_chires()
+
+        # get cosmology from Lenstool instance if available, otherwise use default cosmology
+        self.cosmo = self._get_cosmo()
+
+        # Load the caustic and critical curves if they exist
+        self._get_curves()
+        
+        # set initial default source redshift
+        if getattr(self, 'z_lens', None) is not None :
+            self.Dl = self.cosmo.angular_diameter_distance_z1z2(0., self.z_lens)
+            self.z_source = np.ceil(self.z_lens) + 2.
+            self._get_maps_zinf()
+            self._update_z_source()
             
+
+
+
+
+
+
+
             
     def compute_sources_and_images(self, ngrid=256, restrict_to_mult_field=False) :
         if self.source is not None :
@@ -336,23 +361,44 @@ class LensModel :
             self.potfile = self.image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec', verbose=self.verbose)
             self.potfile.workspace = self.workspace
     
-    def load_saved_maps(self) :
-        self.convergence_maps_path = os.path.join(self.model_dir, 'convergence_maps.pkl')
-        if os.path.exists(self.convergence_maps_path) :
-            self._vprint('convergence_maps.pkl found')
-            with open(self.convergence_maps_path, 'rb') as f :
-                self.convergence_maps = pickle.load(f)
+    def _get_maps_zinf(self) :
+        self._displacements_maps_zinf_path = os.path.join(self.model_dir, 'dpl_zinf.fits')
+        if os.path.exists(self._displacements_maps_zinf_path) :
+            self._vprint('dpl_zinf.fits found')
+            with fits.open(self._displacements_maps_zinf_path) as hdul :
+                dx_map_zinf, dy_map_zinf, dmap_wcs = hdul['dx'].data, hdul['dy'].data, WCS(hdul[0].header)
         else :
-            self.convergence_maps = {}
-        #######################################################################
-        self.dpl_maps_path = os.path.join(self.model_dir, 'dpl_maps.pkl')
-        if os.path.exists(self.dpl_maps_path) :
-            self._vprint('dpl_maps.pkl found')
-            with open(self.dpl_maps_path, 'rb') as f :
-                self.dpl_maps = pickle.load(f)
-        else :
-            self.dpl_maps = {}
-        #######################################################################
+            self._update_z_source()
+            self._vprint(f"Computing displacement maps... (can take a little while)")
+            dx_map, dy_map, dmap_wcs = self.compute_displacement_maps()
+            self._vprint('done')
+            dx_map_zinf = dx_map / self.DlsDs
+            dy_map_zinf = dy_map / self.DlsDs
+
+            header = dmap_wcs.to_header()
+            header['UNITS'] = 'arcsec'
+            hdul = fits.HDUList()
+            hdul.append(fits.PrimaryHDU(header=header))
+            hdul.append(fits.ImageHDU(data=dx_map_zinf, header=header, name='dx'))
+            hdul.append(fits.ImageHDU(data=dy_map_zinf, header=header, name='dy'))
+            hdul.writeto(self._displacements_maps_zinf_path, overwrite=True)
+
+        self._dpl_zinf = {'dx': dx_map_zinf, 'dy': dy_map_zinf, 'wcs': dmap_wcs}
+        self._maps_wcs = dmap_wcs
+
+        # Get the x and y pixel scales (in degrees per pixel) from the WCS
+        self._maps_xpix2arcsec, self._maps_ypix2arcsec = np.abs(dmap_wcs.wcs.cdelt[0]) * 3600., np.abs(dmap_wcs.wcs.cdelt[1]) * 3600.
+ 
+        self.alpha_inf = np.array([dx_map_zinf, dy_map_zinf])
+        dx_map_zinf_pix_units = dx_map_zinf / self._maps_xpix2arcsec
+        dy_map_zinf_pix_units = dy_map_zinf / self._maps_ypix2arcsec
+        self.kappa_inf = (np.gradient(dx_map_zinf_pix_units)[1] + np.gradient(dy_map_zinf_pix_units)[0]) / 2
+        gamma_1_inf = (np.gradient(dx_map_zinf_pix_units)[1] - np.gradient(dy_map_zinf_pix_units)[0]) / 2
+        gamma_2_inf = (np.gradient(dx_map_zinf_pix_units)[0] + np.gradient(dy_map_zinf_pix_units)[1]) / 2
+        self.gamma_inf = np.array([gamma_1_inf, gamma_2_inf])
+        self.shear_inf = np.sqrt(gamma_1_inf**2 + gamma_2_inf**2)
+
+    def _get_curves(self) :
         self.lt_curves_path = os.path.join(self.model_dir, 'lt_curves.pkl')
         if os.path.exists(self.lt_curves_path) :
             self._vprint('lt_curves.pkl found')
@@ -360,15 +406,7 @@ class LensModel :
                 self.lt_curves = pickle.load(f)
         else :
             self.lt_curves = {}
-        #######################################################################
-        self.lt_magnification_maps_path = os.path.join(self.model_dir, 'lt_magnification_maps.pkl')
-        if os.path.exists(self.lt_magnification_maps_path) :
-            self._vprint('lt_magnification_maps.pkl found')
-            with open(self.lt_magnification_maps_path, 'rb') as f :
-                self.lt_magnification_maps = pickle.load(f)
-        else :
-            self.lt_magnification_maps = {}
-        #######################################################################
+
         self.lt_caustics_path = os.path.join(self.model_dir, 'lt_caustics.pkl')
         if os.path.exists(self.lt_caustics_path) :
             self._vprint('lt_caustics.pkl found')
@@ -376,9 +414,6 @@ class LensModel :
                 self.lt_caustics = pickle.load(f)
         else :
             self.lt_caustics = {}
-    
-    #def select_multiple_images(self) :
-    #    print('function to be implemented in the future')
     
     def plot(self, which=None) :
         if which is not None :
@@ -426,10 +461,6 @@ class LensModel :
         self._vprint("Images to plot are now ", self.which)
         #self.clear()
         #self.plot()
-        
-    def __make_files(self) : #You can probably remove this function now that we are using Lenstool's wrapper
-        best_files_maker(self.model_dir)
-        make_magnifications_and_curves(self.model_dir)
     
     
     def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
@@ -494,22 +525,33 @@ class LensModel :
         self._vprint(f"Loaded {len(self.burnin_table)} burn-in samples from {burnin_file_path}")
         return self.burnin_table
     
-    def plot_chi2(self) :
-        cst = -2 * self.bayes_table['ln(Lhood)'][0] - self.bayes_table['Chi2'][0]
-        chi2_burnin = -2 * self.burnin_table['ln(Lhood)'] - cst
-        x_burnin = np.arange(len(chi2_burnin))
-        chi2_sampling = self.bayes_table['Chi2']
-        x_sampling = np.arange(len(x_burnin), len(x_burnin) + len(chi2_sampling))
+    def plot_chi2(self, show_matplotlib=True) :
+        self._chi2_dict = {"burnin": None, "sampling": None}
 
-        fig, ax = plt.subplots()
-        ax.plot(x_burnin, chi2_burnin, label='Burn-in')
-        ax.plot(x_sampling, chi2_sampling, label='Sampling')
-        ax.legend()
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Chi2')
-        ax.grid(True)
-        fig.show()
-        return fig, ax
+        cst = -2 * self.bayes_table['ln(Lhood)'][0] - self.bayes_table['Chi2'][0] if getattr(self, "bayes_table", None) is not None else 0.
+        if getattr(self, "burnin_table", None) is not None :
+            chi2_burnin = -2 * self.burnin_table['ln(Lhood)'] - cst
+            x_burnin = np.arange(len(chi2_burnin))
+            self._chi2_dict["burnin"] = {"chi2": chi2_burnin, "steps": x_burnin}
+
+        if getattr(self, "bayes_table", None) is not None :
+            chi2_sampling = self.bayes_table['Chi2']
+            n_burnin = len(self._chi2_dict["burnin"]["steps"]) if self._chi2_dict["burnin"] is not None else 0
+            x_sampling = np.arange(n_burnin, n_burnin + len(chi2_sampling))
+            self._chi2_dict["sampling"] = {"chi2": chi2_sampling, "steps": x_sampling}
+    
+        if show_matplotlib :
+            fig, ax = plt.subplots()
+            for key, label in (("burnin", 'Burn-in'), ("sampling", 'Sampling')) :
+                if self._chi2_dict[key] is not None :
+                    ax.plot(self._chi2_dict[key]["steps"], self._chi2_dict[key]["chi2"], label=label)
+            ax.legend()
+            ax.set_xlabel('Iteration')
+            ax.set_ylabel('Chi2')
+            ax.grid(True)
+            fig.show()
+            return fig, ax
+        return self._chi2_dict
 
     def read_chires(self) :
         """
@@ -883,10 +925,9 @@ class LensModel :
             f.writelines(new_lines)
         self._vprint(f"Optimized parameter file written to {output_path}")
         return output_path
-    
-    
-    def set_lt_z(self, z, color=[255,100,255], recompute=False, plot_critical=True, plot_caustic=False) :
-        self.lt_z = z
+
+    def set_z_source(self, z, color=[255,100,255], recompute=False, plot_critical=True, plot_caustic=False) :
+        self.z_source = z
         self._vprint(self.best_file_path)
         self._vprint(os.getcwd())
         #self.lt.set_grid(50, 0)
@@ -902,48 +943,10 @@ class LensModel :
         if plot_caustic :
             self.plot_lt_curve(color=[0, 255, 255], which='caustic')
         
-        ######## Magnification ########
-        if z not in self.lt_magnification_maps.keys() or recompute :
-            self._vprint('Computing magnification map (can take a little while)...')
-            self.lt_magnification_maps[z] = self.lt.g_ampli(1, self.magnification_res, self.lt_z)
-            self._vprint('done')
-            with open(self.lt_magnification_maps_path, 'wb') as f:
-                pickle.dump(self.lt_magnification_maps, f)
-        self.magnification_map, self.magnification_wcs = self.lt_magnification_maps[z]            
-        
-        ######## Convergence ########
-        if self.lt_z not in self.convergence_maps.keys() or recompute :
-            self.compute_lt_convergence()
-        else :
-            self.convergence_map, self.convergence_map_wcs = self.convergence_maps[self.lt_z]
-        
-        ######## Displacement maps ########
-        if self.lt_z not in self.dpl_maps.keys() or recompute :
-            self.compute_lt_dpl()
-        else :
-            self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
-        
-        mmap, wcs = self.lt_magnification_maps[z]
+        self._update_z_source()
+
+        mmap, wcs = self.mu, self._maps_wcs
         self.get_magnification = MakeFunctionFromMap(mmap, wcs)
-        
-    def compute_lt_convergence(self, z=None, npix=2000) :
-        z = self.lt_z if z is None else z
-        self._vprint('Computing convergence map (can take a little while)...')
-        self.convergence_maps[z] = self.lt.g_mass(1, npix, self.z_lens, z)
-        self.convergence_map, self.convergence_map_wcs = self.convergence_maps[z]
-        self._vprint('done')
-        with open(self.convergence_maps_path, 'wb') as f:
-            pickle.dump(self.convergence_maps, f)
-        
-    def compute_lt_dpl(self, z=None, npix=2000) :
-        z = self.lt_z if z is None else z
-        self._vprint('Computing displacement maps (can take a little while)...')
-        self.dpl_maps[z] = self.lt.g_dpl(npix, z)
-        self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[z]
-        self._vprint('done')
-        with open(self.dpl_maps_path, 'wb') as f:
-            pickle.dump(self.dpl_maps, f)
-    
     
     def start_im2source(self) :
         start_im2source(self)
@@ -1001,8 +1004,8 @@ class LensModel :
                     z_colname = name
                     break
             if z_colname is None and z_source is None :
-                self._vprint('Redshift column not found in catalog. Using current source redshift = ' + str(self.lt_z))
-                z_source = self.lt_z
+                self._vprint('Redshift column not found in catalog. Using current source redshift = ' + str(self.z_source))
+                z_source = self.z_source
                 
             for i in tqdm(range(len(cat))) :
                 z = cat[z_colname][i] if z_source is None else z_source
@@ -1065,7 +1068,7 @@ class LensModel :
     
     def compute_lt_curve(self, z=None, limitHigh=0.5, limitLow=0.1) :
         if z==None :
-            z = self.lt_z
+            z = self.z_source
         self._vprint('Computing critical curve (can take a little while)...')
         self.lt_curve = self.lt.criticnew(zs=z, limitHigh=limitHigh, limitLow=limitLow) #limitHigh=1., limitLow=0.05
         
@@ -1161,6 +1164,132 @@ class LensModel :
         if existing_plot is not None :
             self.image.ImageView.removeItem(existing_plot)
             setattr(self, attr_name, None)
+
+    def plot_convergence(self) :
+        self._plot_map(self.kappa, self._maps_wcs)
+    def plot_magnification(self) :
+        data = np.abs(self.mu) if self.magnification_abs else self.mu
+        self._plot_map(data, self._maps_wcs)
+    def plot_tangential_magnification(self) :
+        self._plot_map(self.rmu, self._maps_wcs)
+    def plot_radial_magnification(self) :
+        self._plot_map(self.tmu, self._maps_wcs)
+    def plot_shear(self) :
+        self._plot_map(self.shear, self._maps_wcs)
+        
+    def _plot_map(self, map_data, wcs, cmap=None, opacity=None, levels=None, show_histogram=True) :
+        """
+        Overlay a 2D map (e.g. convergence, magnification, shear) on top of the
+        image currently displayed, positioned according to its WCS. The map gets
+        its own interactive histogram/LUT, placed to the left of the image's
+        histogram, which can be shown/hidden with the '<' button of the viewer.
+        Any previously plotted map is replaced.
+        Args:
+            map_data: 2D array, indexed as map_data[y, x] (FITS convention).
+                      NaN and infinite values are displayed as transparent.
+            wcs: astropy WCS (or FITS header) of the map.
+            cmap: name of a pyqtgraph/matplotlib colormap, or a pg.ColorMap.
+            opacity: opacity of the map, between 0 and 1.
+            levels: (min, max) color levels. Defaults to the 1st and 99th
+                    percentiles of the finite values.
+            show_histogram: whether the map histogram is initially visible.
+        Returns:
+            map_plot: the pg.ImageItem displaying the map
+        """
+        if cmap is None :
+            cmap = self.map_cmap
+        if opacity is None :
+            opacity = self.map_opacity
+        data = np.array(map_data, dtype=float)
+        if data.ndim != 2 :
+            raise ValueError(f"map_data must be a 2D array, got shape {data.shape}")
+        data[~np.isfinite(data)] = np.nan
+        if not np.isfinite(data).any() :
+            raise ValueError("map_data contains no finite values")
+        map_wcs = (wcs if isinstance(wcs, WCS) else WCS(wcs)).celestial
+
+        self.image.plot_image()
+        self._clear_map()
+        image_view = self.image.ImageView
+
+        self.current_map_ImageItem = get_ImageItem_projected_onto_reference(self.image.image_data, self.image.wcs, data, map_wcs)
+        
+        self.current_map_ImageItem.setOpacity(opacity)
+        image_view.addItem(self.current_map_ImageItem)
+        # Stack the map right above the image, below catalogs/curves added earlier
+        siblings = image_view.imageItem.parentItem().childItems()
+        i = siblings.index(image_view.imageItem)
+        if i + 1 < len(siblings) and siblings[i+1] is not self.current_map_ImageItem :
+            self.current_map_ImageItem.stackBefore(siblings[i+1])
+
+        self.map_histogram = pg.HistogramLUTWidget(image=self.current_map_ImageItem)
+        colormap = get_colormap(cmap)
+        self.map_histogram.gradient.setColorMap(colormap)
+        if levels is None :
+            levels = np.nanpercentile(data, [1., 99.])
+        self.map_histogram.setLevels(*levels)
+        # Shift the image histogram and its buttons one column to the right and
+        # insert the map histogram in column 1, i.e. to the left of the image histogram
+        self._set_image_histogram_shift(image_view, True)
+        image_view.ui.gridLayout.addWidget(self.map_histogram, 0, 1, 2, 1)
+        self.map_histogram.setVisible(show_histogram)
+
+        self._map_histogram_toggle_btn = self.image._make_floating_toggle_button(
+            self.image.QWidget,
+            '<',
+            'top-right',
+            lambda : self.map_histogram.setVisible(not self.map_histogram.isVisible()),
+            x_margin=70,
+            y_margin=8,
+        )
+        return self.current_map_ImageItem
+
+    def _apply_map_style(self) :
+        """Update colormap and opacity on the current map overlay, if any."""
+        if self.current_map_ImageItem is None :
+            return
+        self.current_map_ImageItem.setOpacity(self.map_opacity)
+        if self.map_histogram is None :
+            return
+        colormap = get_colormap(self.map_cmap)
+        self.map_histogram.gradient.setColorMap(colormap)
+
+    @staticmethod
+    def _set_image_histogram_shift(image_view, shifted) :
+        """
+        Move the image histogram (and the ROI/menu buttons below it) of a pyqtgraph
+        ImageView one column to the right (shifted=True) to make room for the map
+        histogram in column 1, or put them back to their default position (shifted=False).
+        """
+        ui = image_view.ui
+        layout = ui.gridLayout
+        offset = 1 if shifted else 0
+        for widget, row, col, row_span, col_span in [(ui.histogram, 0, 1, 1, 2),
+                                                     (ui.roiBtn, 1, 1, 1, 1),
+                                                     (ui.menuBtn, 1, 2, 1, 1)] :
+            layout.removeWidget(widget)
+            layout.addWidget(widget, row, col + offset, row_span, col_span)
+
+    def _clear_map(self) :
+        """Remove the map plotted with plot_map(), along with its histogram and toggle button."""
+        try :
+            if self.current_map_ImageItem is not None and self.image.ImageView is not None :
+                self.image.ImageView.removeItem(self.current_map_ImageItem)
+            if self.map_histogram is not None :
+                self.map_histogram.setParent(None)
+                self.map_histogram.deleteLater()
+                if self.image.ImageView is not None :
+                    self._set_image_histogram_shift(self.image.ImageView, False)
+            if self._map_histogram_toggle_btn is not None :
+                if self.image.QWidget is not None :
+                    self.image.QWidget.remove_floating_widget(self._map_histogram_toggle_btn)
+                self._map_histogram_toggle_btn.deleteLater()
+        except RuntimeError :
+            # The underlying Qt objects were already deleted (e.g. the window was closed)
+            pass
+        self.current_map_ImageItem = None
+        self.map_histogram = None
+        self._map_histogram_toggle_btn = None
         
     def plot_bayes(self) :
         plot_corner(self.samples_df)
@@ -1355,36 +1484,53 @@ class LensModel :
         self.imsim = image_simulator(self.image, lens_model=self, which_filter=which_filter, throttle_mode=throttle_mode)
         
     
+    ######### DEPRECATED: check what to keep #########
+    def compute_convergence(self, z=None, npix=2000) :
+        z = self.z_source if z is None else z
+        self.convergence_map, self.convergence_map_wcs = self.lt.g_mass(1, npix, self.z_lens, z)
+        fig, ax = plt.subplots()
+        ax.imshow(self.convergence_map, origin='lower')
+        return self.convergence_map, self.convergence_map_wcs
+    
+    def compute_displacement_maps(self, z=None, npix=2000) :
+        z = self.z_source if z is None else z
+        self.dx_map, self.dy_map, self.dmap_wcs = self.lt.g_dpl(npix, z)
+        return self.dx_map, self.dy_map, self.dmap_wcs
+
     def compute_mass_map(self, z=None, npix=1000) :
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         self.mass_map, self.mass_map_wcs = self.lt.g_mass(1, npix, self.z_lens, z)
         fig, ax = plt.subplots()
         ax.imshow(np.arctan(self.mass_map), origin='lower')
+        return self.mass_map, self.mass_map_wcs
     
     def compute_magnification_map(self, z=None, npix=1000) :
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         self.magnification_map, self.magnification_wcs = self.lt.g_ampli(1, npix, z)
         fig, ax = plt.subplots()
         ax.imshow(np.arctan(np.abs(self.magnification_map)), origin='lower')
+        return self.magnification_map, self.magnification_wcs
     
     def compute_time_map(self, z=None, npix=1000) :
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         self.time_map, self.time_wcs = self.lt.g_time(1, npix, z)
         fig, ax = plt.subplots()
         ax.imshow(self.time_map, origin='lower')
-        
+        return self.time_map, self.time_wcs
+    
     def compute_shear_map(self, z=None, npix=1000, which='gamma') :
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         ishear = 1 if which=='gamma' else 3 if which=='gamma1' else 4 if which=='gamma2' else None
         if ishear is None :
             raise ValueError('Invalid shear type: ' + which)
         self.shear_map, self.shear_wcs = self.lt.g_shear(ishear, npix, z)
         fig, ax = plt.subplots()
         ax.imshow(self.shear_map, origin='lower')
-        
+        return self.shear_map, self.shear_wcs
+
     def compute_mass(self, ra, dec, z=None) :
         initial_field = self.lt.get_field([])
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         xr, yr = self.world_to_relative(ra, dec)
         delta = 0.0001 # 0.1 milli arcsec
         self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
@@ -1395,7 +1541,7 @@ class LensModel :
     
     def compute_magnification(self, ra, dec, z=None) :
         initial_field = self.lt.get_field([])
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         xr, yr = self.world_to_relative(ra, dec)
         delta = 0.0001 # 0.1 milli arcsec
         self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
@@ -1406,7 +1552,7 @@ class LensModel :
     
     def compute_time(self, ra, dec, z=None) :
         initial_field = self.lt.get_field([])
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         xr, yr = self.world_to_relative(ra, dec)
         delta = 0.0001 # 0.1 milli arcsec
         self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
@@ -1417,7 +1563,7 @@ class LensModel :
     
     def compute_shear(self, ra, dec, z=None, which='gamma') :
         initial_field = self.lt.get_field([])
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         ishear = 1 if which=='gamma' else 3 if which=='gamma1' else 4 if which=='gamma2' else None
         xr, yr = self.world_to_relative(ra, dec)
         delta = 0.0001 # 0.1 milli arcsec
@@ -1429,7 +1575,7 @@ class LensModel :
         
     def compute_displacement(self, ra, dec, z=None) :
         initial_field = self.lt.get_field([])
-        z = self.lt_z if z is None else z
+        z = self.z_source if z is None else z
         xr, yr = self.world_to_relative(ra, dec)
         delta = 0.0001 # 0.1 milli arcsec
         self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
@@ -1438,7 +1584,9 @@ class LensModel :
         self.lt.set_field(initial_field)
         return np.mean(dx), np.mean(dy)
     
+    ######### END OF DEPRECATED #########
     
+
     def set_field(self) :
         # Careful, this function only works when the ROI is flat and image in world frame
         
@@ -1667,6 +1815,37 @@ class LensModel :
             plot_source_plane_grid(map_data)
         
         return map_data, target_wcs
+
+    def _get_cosmo(self) :
+        if getattr(self, 'lt', None) is not None :
+            return FlatLambdaCDM(H0=self.lt.C.H0, Om0=self.lt.C.omegaM)
+        else :
+            return get_default_cosmology()
+    
+    def get_DlsDs(self, z=None) :
+        if getattr(self, 'cosmo', None) is not None and getattr(self, 'z_lens', None) is not None :
+            z = self.z_source if z is None else z
+            Dls = self.cosmo.angular_diameter_distance_z1z2(self.z_lens, z)
+            Ds = self.cosmo.angular_diameter_distance_z1z2(0., z)
+            return Dls, Ds
+        else :
+            raise ValueError('Cosmology or lens redshift not set')
+    
+    def _update_z_source(self) :
+        self.Dls, self.Ds = self.get_DlsDs()
+        self.DlsDs = (self.Dls / self.Ds).value
+        self.Sigma_crit = astro_constants.c**2 / (4 * np.pi * astro_constants.G) * self.Ds / (self.Dl * self.Dls)
+
+        if getattr(self, 'alpha_inf', None) is not None :
+            self.alpha = self.alpha_inf * self.DlsDs
+            self.kappa = self.kappa_inf * self.DlsDs
+            self.gamma = self.gamma_inf * self.DlsDs
+            self.shear = self.shear_inf * self.DlsDs
+
+            self.tmu = 1 / (1 - self.kappa - self.shear)
+            self.rmu = 1 / (1 - self.kappa + self.shear)
+            self.mu = 1 / ( (1 - self.kappa)**2 - self.shear**2 )
+
 
 
 def import_lenstool(model_dir, image=None, compute_predictions=False, verbose=True) :

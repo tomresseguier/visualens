@@ -1,12 +1,17 @@
 import os
 from functools import partial
 
+import numpy as np
+import pyqtgraph as pg
+from matplotlib import pyplot as plt
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QFileDialog, QCheckBox, QSlider,
+    QLabel, QFileDialog, QCheckBox, QSlider, QComboBox,
 )
 
+from ..utils.utils_Qt.Special_QWidgets import PlotWidget_xyZooming
+from ..utils.utils_Qt.custom_colormaps import get_colormap
 from .catalog_controls import CatalogControlsTab
 from .controls import ControlBuilder
 from .ui_state import CatalogUIState, LensModelUIState
@@ -14,7 +19,12 @@ from .ui_state import CatalogUIState, LensModelUIState
 
 LT_Z_STEP = 0.5   # redshift slider step; 30 steps -> redshift range [0, 15]
 LT_Z_N_STEPS = 30
-BROAD_FAMILY_COLUMNS = 5
+BROAD_FAMILY_COLUMNS = 8
+MAP_CMAP_CHOICES = (
+    'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo',
+    'gray', 'hot', 'coolwarm', 'seismic', 'RdBu',
+)
+MAP_OPACITY_SLIDER_MAX = 100
 
 
 class ImageSidePanel(QTabWidget) :
@@ -31,6 +41,10 @@ class ImageSidePanel(QTabWidget) :
 
         self._critical_curve_toggle = None
         self._caustic_curve_toggle = None
+        self._map_plot_toggles = {}
+        self._active_map_plot = None
+        self._mag_contours_toggle = None
+        self._mag_abs_checkbox = None
 
         self.image_tab = self._make_image_tab()
         self.catalog_tab, self.catalog_subtabs = self._make_catalog_tab()
@@ -197,6 +211,10 @@ class ImageSidePanel(QTabWidget) :
 
         layout.addWidget(ControlBuilder.separator())
 
+        self._optimization_container = QWidget()
+        QVBoxLayout(self._optimization_container).setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._optimization_container)
+
         on_the_fly_btn = QPushButton('Start on the fly predicted images')
         on_the_fly_btn.clicked.connect(self._start_on_the_fly_predicted_images)
         layout.addWidget(on_the_fly_btn)
@@ -213,12 +231,76 @@ class ImageSidePanel(QTabWidget) :
         """Rebuild the dynamic parts of the Lens model tab to match ``workspace.lens_model``."""
         self._rebuild_broad_family_checkboxes()
         self._rebuild_lens_model_subtabs()
+        self._rebuild_optimization_section()
 
         lens_model = self.workspace.lens_model
-        if lens_model is not None and getattr(lens_model, 'lt_z', None) is not None :
+        if lens_model is not None and getattr(lens_model, 'z_source', None) is not None :
             with ControlBuilder.signals_blocked(self.lt_z_slider) :
-                self.lt_z_slider.setValue(round(lens_model.lt_z / LT_Z_STEP))
-            self._lt_z_value_label.setText(f"{lens_model.lt_z:.1f}")
+                self.lt_z_slider.setValue(round(lens_model.z_source / LT_Z_STEP))
+            self._lt_z_value_label.setText(f"{lens_model.z_source:.1f}")
+
+    def _rebuild_optimization_section(self) :
+        """Chi2-vs-iteration plot and corner-plot button; only present if the model has burn-in/bayes tables."""
+        container = self._optimization_container
+        layout = container.layout()
+        while layout.count() > 0 :
+            widget = layout.takeAt(0).widget()
+            if widget is not None :
+                widget.deleteLater()
+
+        lens_model = self.workspace.lens_model
+        has_burnin = lens_model is not None and getattr(lens_model, 'burnin_table', None) is not None
+        has_bayes = lens_model is not None and getattr(lens_model, 'bayes_table', None) is not None
+        container.setVisible(has_burnin or has_bayes)
+        if not (has_burnin or has_bayes) :
+            return
+
+        layout.addWidget(QLabel('Optimization'))
+
+        try :
+            chi2_dict = lens_model.plot_chi2(show_matplotlib=False)
+        except Exception as exc :
+            ControlBuilder.error(self._dialog_parent(), 'Failed to compute chi2 curve', exc)
+            chi2_dict = None
+
+        if chi2_dict is not None :
+            plot_widget = PlotWidget_xyZooming()
+            plot_widget.setMinimumHeight(180)
+            plot_widget.setLabel('bottom', 'Iteration')
+            plot_widget.setLabel('left', 'Chi2')
+            plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            legend = plot_widget.addLegend()
+            #legend.setMovable(False)
+            for key, label, color in (('burnin', 'Burn-in', 'c'), ('sampling', 'Sampling', 'm')) :
+                curve = chi2_dict.get(key)
+                if curve is not None :
+                    plot_widget.plot(
+                        np.asarray(curve['steps']), np.asarray(curve['chi2']),
+                        pen=pg.mkPen(color, width=1.5), name=label,
+                    )
+            sampling = chi2_dict.get('sampling')
+            if sampling is not None :
+                chi2 = np.asarray(sampling['chi2'])
+                y_std = np.std(chi2)
+                plot_widget.setYRange(np.min(chi2) - 20 * y_std, np.max(chi2) + 20 * y_std, padding=0)
+            layout.addWidget(plot_widget)
+
+        if has_bayes :
+            corner_btn = QPushButton('Corner plot')
+            corner_btn.clicked.connect(self._show_corner_plot)
+            layout.addWidget(corner_btn)
+
+        layout.addWidget(ControlBuilder.separator())
+
+    def _show_corner_plot(self) :
+        lens_model = self._require_lens_model()
+        if lens_model is None :
+            return
+        try :
+            lens_model.plot_bayes()
+            plt.show(block=False)
+        except Exception as exc :
+            ControlBuilder.error(self._dialog_parent(), 'Failed to plot corner plot', exc)
 
     def _rebuild_broad_family_checkboxes(self) :
         grid = ControlBuilder.reset_grid(self._lens_model_families_container)
@@ -275,7 +357,7 @@ class ImageSidePanel(QTabWidget) :
         self._rebuild_broad_family_checkboxes()
 
     def _replot_lens_model_which(self, lens_model) :
-        for cat in (lens_model.mult, lens_model.source, lens_model.images_filtered) :
+        for cat in (lens_model.mult, lens_model.source, lens_model.images_filtered, lens_model.potfile) :
             if cat is None :
                 continue
             cat_state = CatalogUIState.existing(cat)
@@ -291,11 +373,12 @@ class ImageSidePanel(QTabWidget) :
             return
         z = self.lt_z_slider.value() * LT_Z_STEP
         try :
-            lens_model.set_lt_z(
+            lens_model.set_z_source(
                 z,
                 plot_critical=self._is_checked(self._critical_curve_toggle),
                 plot_caustic=self._is_checked(self._caustic_curve_toggle),
             )
+            self._replot_active_lens_map(lens_model)
         except Exception as exc :
             ControlBuilder.error(self._dialog_parent(), 'Failed to set redshift', exc)
 
@@ -314,41 +397,209 @@ class ImageSidePanel(QTabWidget) :
             ('Multiple images', 'mult'),
             ('Sources', 'source'),
             ('Predicted images', 'images_filtered'),
+            ('Cluster members', 'potfile'),
         ) :
             cat = getattr(lens_model, attr, None) if lens_model is not None else None
-            if cat is not None and attr == 'mult' :
+            if cat is not None and attr in ('mult', 'potfile') :
                 CatalogUIState.of(cat, plot_column=True, colname='id')
             subtabs.addTab(self._make_catalog_controls_tab(cat) if cat is not None else QWidget(), title)
 
-        subtabs.addTab(self._make_curves_tab(lens_model), 'Curves')
+        subtabs.addTab(self._make_maps_and_curves_tab(lens_model), 'Maps and curves')
 
         if 0 <= current_index < subtabs.count() :
             subtabs.setCurrentIndex(current_index)
 
-    def _make_curves_tab(self, lens_model) :
+    @staticmethod
+    def _maps_section_label(text) :
+        label = QLabel(text)
+        label.setStyleSheet('font-weight: bold; margin-top: 4px;')
+        return label
+
+    def _make_maps_and_curves_tab(self, lens_model) :
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
+        self._map_plot_toggles = {}
+        self._active_map_plot = None
+        self._mag_contours_toggle = None
+        self._mag_abs_checkbox = None
+
+        map_style_row = QHBoxLayout()
+        map_style_row.addWidget(QLabel('Colormap'))
+        self._map_cmap_combo = QComboBox()
+        self._map_cmap_combo.addItems(MAP_CMAP_CHOICES)
+        map_style_row.addWidget(self._map_cmap_combo, 1)
+        map_style_row.addWidget(QLabel('Opacity'))
+        self._map_opacity_slider = QSlider(Qt.Horizontal)
+        self._map_opacity_slider.setMinimum(0)
+        self._map_opacity_slider.setMaximum(MAP_OPACITY_SLIDER_MAX)
+        self._map_opacity_slider.setSingleStep(5)
+        map_style_row.addWidget(self._map_opacity_slider, 1)
+        layout.addLayout(map_style_row)
+        self._sync_map_style_controls_from_lens_model(lens_model)
+        self._map_cmap_combo.currentTextChanged.connect(self._on_map_cmap_changed)
+        self._map_opacity_slider.valueChanged.connect(self._on_map_opacity_slider_changed)
+
+        layout.addWidget(self._maps_section_label('Magnification'))
+        mag_row = QHBoxLayout()
+        self._mag_abs_checkbox = QCheckBox('Abs')
+        self._mag_abs_checkbox.setChecked(
+            lens_model is not None and getattr(lens_model, 'magnification_abs', False),
+        )
+        self._mag_abs_checkbox.toggled.connect(self._on_magnification_abs_toggled)
+        self._map_plot_toggles['magnification'] = ControlBuilder.toggle_button(
+            'Plot', partial(self._toggle_lens_map_plot, which='magnification'),
+        )
+        self._mag_contours_toggle = ControlBuilder.toggle_button(
+            'Plot contours', self._toggle_magnification_contours,
+        )
+        mag_row.addWidget(self._mag_abs_checkbox)
+        mag_row.addWidget(self._map_plot_toggles['magnification'])
+        mag_row.addWidget(self._mag_contours_toggle)
+        layout.addLayout(mag_row)
+
+        layout.addWidget(self._maps_section_label('Convergence'))
+        conv_row = QHBoxLayout()
+        self._map_plot_toggles['convergence'] = ControlBuilder.toggle_button(
+            'Plot', partial(self._toggle_lens_map_plot, which='convergence'),
+        )
+        conv_row.addWidget(self._map_plot_toggles['convergence'])
+        layout.addLayout(conv_row)
+
+        layout.addWidget(self._maps_section_label('Shear'))
+        shear_row = QHBoxLayout()
+        self._map_plot_toggles['shear'] = ControlBuilder.toggle_button(
+            'Plot', partial(self._toggle_lens_map_plot, which='shear'),
+        )
+        shear_row.addWidget(self._map_plot_toggles['shear'])
+        layout.addLayout(shear_row)
+
+        layout.addWidget(ControlBuilder.separator())
+
+        layout.addWidget(self._maps_section_label('Curves'))
         critical_on = lens_model is not None and getattr(lens_model, 'critical_curve_plot', None) is not None
         caustic_on = lens_model is not None and getattr(lens_model, 'caustic_curve_plot', None) is not None
-
+        curves_row = QHBoxLayout()
         self._critical_curve_toggle = ControlBuilder.toggle_button(
             'Plot critical curve', partial(self._toggle_lt_curve, which='critical'), critical_on,
         )
         self._caustic_curve_toggle = ControlBuilder.toggle_button(
             'Plot caustic curve', partial(self._toggle_lt_curve, which='caustic'), caustic_on,
         )
-        layout.addWidget(self._critical_curve_toggle)
-        layout.addWidget(self._caustic_curve_toggle)
+        curves_row.addWidget(self._critical_curve_toggle)
+        curves_row.addWidget(self._caustic_curve_toggle)
+        layout.addLayout(curves_row)
         layout.addStretch()
         return tab
+
+    def _sync_map_style_controls_from_lens_model(self, lens_model) :
+        cmap = 'viridis'
+        opacity = 0.6
+        if lens_model is not None :
+            cmap = getattr(lens_model, 'map_cmap', cmap)
+            cmap = getattr(cmap, 'name', cmap)   # map_cmap may be a pg.ColorMap
+            opacity = getattr(lens_model, 'map_opacity', opacity)
+        combo = getattr(self, '_map_cmap_combo', None)
+        slider = getattr(self, '_map_opacity_slider', None)
+        if combo is not None :
+            with ControlBuilder.signals_blocked(combo) :
+                idx = combo.findText(cmap)
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if slider is not None :
+            with ControlBuilder.signals_blocked(slider) :
+                slider.setValue(round(opacity * MAP_OPACITY_SLIDER_MAX))
+
+    def _on_map_cmap_changed(self, cmap) :
+        lens_model = self.workspace.lens_model
+        if lens_model is None :
+            return
+        lens_model.map_cmap = get_colormap(cmap)   # custom 5-point version when available
+        lens_model._apply_map_style()
+
+    def _on_map_opacity_slider_changed(self, value) :
+        lens_model = self.workspace.lens_model
+        if lens_model is None :
+            return
+        lens_model.map_opacity = value / MAP_OPACITY_SLIDER_MAX
+        lens_model._apply_map_style()
+
+    def _on_magnification_abs_toggled(self, checked) :
+        lens_model = self.workspace.lens_model
+        if lens_model is None :
+            return
+        lens_model.magnification_abs = checked
+        if self._active_map_plot == 'magnification' :
+            self._replot_active_lens_map(lens_model)
+
+    def _toggle_magnification_contours(self, checked) :
+        if not checked :
+            return
+        ControlBuilder.warn(
+            self._dialog_parent(), 'Not implemented',
+            'Magnification contours will be available in a future version.',
+        )
+        ControlBuilder.set_checked_silently(self._mag_contours_toggle, False)
+
+    def _toggle_lens_map_plot(self, checked, which) :
+        lens_model = self.workspace.lens_model
+        if lens_model is None :
+            toggle = self._map_plot_toggles.get(which)
+            if toggle is not None :
+                ControlBuilder.set_checked_silently(toggle, False)
+            return
+
+        toggle = self._map_plot_toggles[which]
+        if not checked :
+            if self._active_map_plot == which :
+                lens_model._clear_map()
+                self._active_map_plot = None
+            return
+
+        if getattr(lens_model, 'z_source', None) is None :
+            ControlBuilder.warn(
+                self._dialog_parent(), 'No redshift set',
+                'Please set the source plane redshift with the slider first.',
+            )
+            ControlBuilder.set_checked_silently(toggle, False)
+            return
+
+        for key, btn in self._map_plot_toggles.items() :
+            if key != which :
+                ControlBuilder.set_checked_silently(btn, False)
+
+        plotters = {
+            'magnification' : lens_model.plot_magnification,
+            'convergence' : lens_model.plot_convergence,
+            'shear' : lens_model.plot_shear,
+        }
+        try :
+            plotters[which]()
+            self._active_map_plot = which
+        except Exception as exc :
+            ControlBuilder.error(self._dialog_parent(), 'Failed to plot map', exc)
+            ControlBuilder.set_checked_silently(toggle, False)
+            self._active_map_plot = None
+
+    def _replot_active_lens_map(self, lens_model) :
+        which = self._active_map_plot
+        if which is None or lens_model is None :
+            return
+        plotters = {
+            'magnification' : lens_model.plot_magnification,
+            'convergence' : lens_model.plot_convergence,
+            'shear' : lens_model.plot_shear,
+        }
+        try :
+            plotters[which]()
+        except Exception as exc :
+            ControlBuilder.error(self._dialog_parent(), 'Failed to replot map', exc)
 
     def _toggle_lt_curve(self, checked, which) :
         lens_model = self.workspace.lens_model
         if lens_model is None :
             return
         if checked :
-            if getattr(lens_model, 'lt_z', None) is None :
+            if getattr(lens_model, 'z_source', None) is None :
                 ControlBuilder.warn(
                     self._dialog_parent(), 'No redshift set',
                     'Please set the source plane redshift with the slider first.',
@@ -387,7 +638,7 @@ class ImageSidePanel(QTabWidget) :
         if lens_model is None :
             ControlBuilder.warn(self._dialog_parent(), 'No model', 'Please import a Lenstool model first.')
             return None
-        if need_redshift and getattr(lens_model, 'lt_z', None) is None :
+        if need_redshift and getattr(lens_model, 'z_source', None) is None :
             ControlBuilder.warn(
                 self._dialog_parent(), 'No redshift set',
                 'Please set the source plane redshift with the slider first.',

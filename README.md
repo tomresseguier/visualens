@@ -44,5 +44,5 @@ Then
 
 ***A window should open, with a side panel accessible by clicking the top left button. Click "Open..." under the Image, Catalog, or Lens model tab to get started.***
 
-More example to come here:
-https://github.com/tomresseguier/Lenstool_GUI/tree/main/examples
+More examples here:
+https://github.com/tomresseguier/visualens/tree/main/examples

@@ -1,7 +1,7 @@
 from astropy.cosmology import WMAP9, Planck18, FlatLambdaCDM
 
 
-def get_cosmo(cosmo_name='FlatLambdaCDM') :
+def get_default_cosmology(cosmo_name='FlatLambdaCDM') :
     if cosmo_name == 'Planck18' :
         cosmo = Planck18
     elif cosmo_name == 'WMAP9' :

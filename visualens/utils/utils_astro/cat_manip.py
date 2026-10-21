@@ -1,8 +1,8 @@
-from astropy.table import Table, vstack
+from astropy.table import Table, Column, MaskedColumn, vstack
 import matplotlib.pyplot as plt
 import numpy as np
 import astropy.units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, UnitSphericalRepresentation, SphericalRepresentation
 from scipy import spatial
 
 
@@ -26,6 +26,8 @@ def match_cat2(cats, match_radius=0.5, fill_in_value=np.nan, return_match_idx=Fa
         The radius in arcseconds within which to consider sources as matched. Default is 0.5.
     fill_in_value : float, optional
         The value to use for non-matched sources in the transferred columns. Default is np.nan.
+        For string columns, NaN is replaced by "...". For integer/boolean columns where the value
+        cannot be represented (e.g. NaN), the column is masked instead. SkyCoord columns are filled with NaN coordinates.
     return_match_idx : bool, optional
         If True, returns the indices of the matched sources in the giver catalog. Default is False.
     keep_all_col : bool, optional
@@ -64,31 +66,140 @@ def match_cat2(cats, match_radius=0.5, fill_in_value=np.nan, return_match_idx=Fa
     columns_to_process = cat_giver.colnames if column_to_transfer is None else column_to_transfer
 
     for colname in columns_to_process:
-        col_type = type(cat_giver[colname][0])
-        #if not np.isnan(fill_in_value) :
-        fill_in_value_type = col_type if col_type!=np.ndarray else type(cat_giver[colname][0][0])
-        fill_in_value_matched_type = fill_in_value_type(fill_in_value)
-        #else :
-        #    fill_in_value_matched_type = fill_in_value
         if colname not in matched_cat.colnames:
-            #print(f'Adding column: {colname}')
-            if col_type == np.ndarray :
-                matched_cat[colname] = [np.full(len(cat_giver[colname][0]), fill_in_value_matched_type) for i in range(len(matched_cat))] #np.full(len(matched_cat), np.full(len(cat_giver[colname][0]), fill_in_value))
-            else :
-                matched_cat[colname] = np.full(len(matched_cat), fill_in_value_matched_type)
-            matched_cat[colname][match_mask] = cat_giver[colname][idx[match_mask]]
+            new_colname = colname
         elif keep_all_col:
             new_colname = f"{colname}_CAT2"
-            #print(f'Adding column: {new_colname}')
-            if col_type == np.ndarray :
-                matched_cat[new_colname] = [np.full(len(cat_giver[colname][0]), fill_in_value_matched_type) for i in range(len(matched_cat))] #np.full(len(matched_cat), np.full(len(cat_giver[colname][0]), fill_in_value))
-            else :
-                matched_cat[new_colname] = np.full(len(matched_cat), fill_in_value_matched_type)
-            matched_cat[new_colname][match_mask] = cat_giver[colname][idx[match_mask]]
+        else:
+            continue
+        matched_cat[new_colname] = make_transferred_column(cat_giver[colname], idx, match_mask, fill_in_value)
 
     if return_match_idx:
         return matched_cat, idx
     return matched_cat
+
+
+def _is_nan(value):
+    try:
+        return bool(np.isnan(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_representable(value, dtype):
+    """True if `value` can be stored exactly in an array of the given (integer/bool) dtype."""
+    try:
+        if isinstance(value, (str, bytes)) or _is_nan(value) or not np.isfinite(value):
+            return False
+        if dtype.kind == 'b':
+            return value in (0, 1)
+        if value != int(value):
+            return False
+        info = np.iinfo(dtype)
+        return info.min <= int(value) <= info.max
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _fill_skycoord(rows, unmatched, fill_value):
+    """SkyCoord with NaN coordinates (or `fill_value` if it is itself a SkyCoord) on unmatched rows."""
+    if isinstance(fill_value, SkyCoord):
+        rows = rows.copy()
+        rows[unmatched] = fill_value
+        return rows
+    sph = rows.spherical
+    lon, lat = sph.lon.value.copy(), sph.lat.value.copy()
+    lon[unmatched] = np.nan
+    lat[unmatched] = np.nan
+    lon, lat = lon * sph.lon.unit, lat * sph.lat.unit
+    if sph.distance.unit.is_equivalent(u.dimensionless_unscaled):
+        rep = UnitSphericalRepresentation(lon, lat)
+    else:
+        dist = sph.distance.value.copy()
+        dist[unmatched] = np.nan
+        rep = SphericalRepresentation(lon, lat, dist * sph.distance.unit)
+    return SkyCoord(rep, frame=rows.frame.replicate_without_data())
+
+
+def _fill_plain_column(rows, unmatched, fill_value):
+    """`rows` is a (Masked)Column already holding giver values; overwrite `unmatched` entries with the fill value."""
+    dtype = rows.dtype
+    kind = dtype.kind
+    fill_is_nan = _is_nan(fill_value)
+
+    if kind in ('U', 'S'):
+        if fill_is_nan:
+            fill_str = "..."
+        elif isinstance(fill_value, bytes):
+            fill_str = fill_value.decode()
+        else:
+            fill_str = str(fill_value)
+        if kind == 'S':
+            fill_item = fill_str.encode()
+            width = max(dtype.itemsize, len(fill_item), 1)
+            rows = rows.astype(f'S{width}')
+        else:
+            fill_item = fill_str
+            width = max(dtype.itemsize // 4, len(fill_item), 1)
+            rows = rows.astype(f'<U{width}')
+        rows[unmatched] = fill_item
+        return rows
+
+    if kind in ('f', 'c'):
+        rows[unmatched] = np.nan if fill_is_nan else fill_value
+        return rows
+
+    if kind in ('i', 'u', 'b'):
+        if _is_representable(fill_value, dtype):
+            rows[unmatched] = fill_value
+            return rows
+        rows = MaskedColumn(rows)
+        rows[unmatched] = np.ma.masked
+        return rows
+
+    if kind in ('M', 'm'):
+        rows[unmatched] = np.array('NaT', dtype=dtype) if fill_is_nan else fill_value
+        return rows
+
+    rows[unmatched] = None if fill_is_nan else fill_value
+    return rows
+
+
+def make_transferred_column(giver_col, idx, match_mask, fill_in_value=np.nan):
+    """
+    Build a column of length len(idx) holding giver_col[idx] where match_mask is True and a fill value elsewhere.
+
+    The output keeps the giver's type: dtype, shape (multidimensional columns), unit, description, metadata,
+    SkyCoord / Quantity / Time mixin columns. Unmatched rows are filled with:
+      - float/complex columns: `fill_in_value` (NaN by default)
+      - string columns: "..." if `fill_in_value` is NaN, otherwise str(`fill_in_value`) (width is expanded if needed)
+      - integer/bool columns: `fill_in_value` if exactly representable, otherwise the entry is masked
+      - datetime columns: NaT if `fill_in_value` is NaN
+      - SkyCoord columns: NaN coordinates
+      - other mixins (e.g. Time): masked entries
+    """
+    unmatched = ~np.asarray(match_mask, dtype=bool)
+    rows = giver_col[idx]
+
+    if isinstance(giver_col, SkyCoord):
+        return _fill_skycoord(rows, unmatched, fill_in_value)
+
+    if isinstance(giver_col, Column):
+        return _fill_plain_column(rows, unmatched, fill_in_value)
+
+    if isinstance(giver_col, u.Quantity):
+        rows = rows.copy()
+        if not isinstance(fill_in_value, u.Quantity):
+            fill_in_value = fill_in_value * rows.unit
+        rows[unmatched] = fill_in_value
+        return rows
+
+    try:
+        rows = rows.copy()
+        rows[unmatched] = np.ma.masked
+    except Exception as err:
+        raise TypeError(f"Cannot build a filled column for giver column of type {type(giver_col).__name__}: {err}") from err
+    return rows
 
 
 def _get_filled_and_empty_columns(catalog):

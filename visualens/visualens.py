@@ -224,6 +224,9 @@ class Visualens :
         self._attach_side_panel()
         self.lens_model.clear()
         self.lens_model.plot()
+        main_window = getattr(self.image, 'QMainWindow', None)
+        if main_window is not None :
+            main_window.setWindowTitle(self.image._window_title())
         self.signals.lens_model_changed.emit()
         return self.lens_model
 

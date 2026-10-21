@@ -18,7 +18,7 @@ from lenstronomy.LensModel.lens_model_extensions import LensModelExtensions
 
 from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
 from ...utils.utils_general.sort_points import break_curves
-from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special, DragImagePlotWidget_special
+from ...utils.utils_Qt.Special_QWidgets import DragPlotWidget_special, DragImagePlotWidget_special
 from ...utils.utils_Qt.utils_general import transform_rectangle
 from .event_filters import SourceFilter, ImageFilter
 from .lenstronomy_model import lenstronomy_model
@@ -49,7 +49,7 @@ class image_simulator :
         self.image = image
         self.lensmodel = lens_model
         self._DEFAULT_LENSING_COLUMNS = _DEFAULT_LENSING_COLUMNS
-        self.z_source = lens_model.lt_z
+        self.z_source = lens_model.z_source
         self.ROI = image.QWidget.current_ROI
         #self.image.ImageView.addItem(ROI)
         self.models=None
@@ -102,27 +102,27 @@ class image_simulator :
         if lens_model.lt is not None :
             self._initial_field = lens_model.lt.get_field([])
             lens_model.lt.set_field(new_field)
-            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or lens_model.dpl_maps[lens_model.lt_z][0].shape[0] != dpl_resolution :
+            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or lens_model.dpl_maps[lens_model.z_source][0].shape[0] != dpl_resolution :
                 lens_model.compute_lt_dpl(npix=dpl_resolution)
                 lens_model.compute_lt_convergence(npix=dpl_resolution)
         else :
-            if lens_model.lt_z not in lens_model.dpl_maps :
-                raise KeyError('Displacement maps for redshift {} have not been calculated yet.'.format(lens_model.lt_z))
+            if lens_model.z_source not in lens_model.dpl_maps :
+                raise KeyError('Displacement maps for redshift {} have not been calculated yet.'.format(lens_model.z_source))
             else :
                 print('Lenstool instance not initialized. Using saved displacement maps instead. \
                       Careful: saved maps only cover the area you selected if you previously computed them for this specific area!')
         
         #-------------- Lens model Lenstronomy definitions --------------#
         
-        deltaPix = abs( lens_model.dpl_maps[lens_model.lt_z][2].wcs.cdelt[0]*3600 )
+        deltaPix = abs( lens_model.dpl_maps[lens_model.z_source][2].wcs.cdelt[0]*3600 )
         x_grid_interp, y_grid_interp = util.make_grid(dpl_resolution, deltaPix)
         x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
         
         self.LensModel_kwargs = [{'grid_interp_x': x_axes,
                                   'grid_interp_y': y_axes,
-                                  'f_': lens_model.convergence_maps[lens_model.lt_z][0],
-                                  'f_x': lens_model.dpl_maps[lens_model.lt_z][0],
-                                  'f_y': lens_model.dpl_maps[lens_model.lt_z][1]}]
+                                  'f_': lens_model.convergence_maps[lens_model.z_source][0],
+                                  'f_x': lens_model.dpl_maps[lens_model.z_source][0],
+                                  'f_y': lens_model.dpl_maps[lens_model.z_source][1]}]
         # Preserved for ``make_lm_dict`` / ``_assemble_lens_model_kwargs``: INTERPOL dict only,
         # so ellipse ROIs on the image plane can append ``PJAFFE_ELLIPSE_POTENTIAL_Q_PHI`` components.
         self.LensModel_base_kwargs = copy.deepcopy(self.LensModel_kwargs[0])

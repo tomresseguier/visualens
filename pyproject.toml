@@ -1,29 +1,30 @@
 [project]
 name = "visualens"
-version = "1.0.1"
+version = "1.0.3"
 authors = [
   { name="Tom Resseguier", email="tresseg1@jhu.edu" },
 ]
 description = "A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
+# External (non-pip) requirement: the `lenstool` executable (e.g. `conda install -c conda-forge lenstool`).
 dependencies = [
-  "numpy>=1.21",
-  "astropy>=5.0",
-  "matplotlib>=3.5",
-  "PyQt5>=5.15",
-  "pyqtgraph>=0.12",
-  "scipy>=1.7",
-  "pandas>=1.4",
-  "tqdm>=4.60",
-  "corner>=2.2",
-  "lenstronomy>=1.1",
-  "reproject",
+  "numpy>=1.21,<3",
+  "scipy>=1.7,<2",                # spatial.cKDTree, spatial.distance.pdist
+  "astropy>=5.0,<9",              # Table, WCS, SkyCoord, cosmology (Planck18/WMAP9)
+  "pandas>=1.4,<4",
+  "matplotlib>=3.5,<4",           # `from matplotlib import colormaps` needs >=3.5
+  "PyQt5>=5.15,<6",               # code imports PyQt5 directly (incl. `from PyQt5 import sip`)
+  "pyqtgraph>=0.13.3,<0.15",      # pg.colormap, pg.ScaleBar, pg.QtWidgets; PyQt5 5.15 supported
+  "tqdm>=4.60,<5",
+  "corner>=2.2,<3",
+  "lenstronomy>=1.11,<2",         # LensModel(z_lens, z_source), ImageModel/PixelGrid, FittingSequence, Plots
+  "reproject>=0.9,<1",            # reproject_interp
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/tomresseguier/Lenstool_GUI/"
-"Issues" = "https://github.com/tomresseguier/Lenstool_GUI/issues"
+"Homepage" = "https://github.com/tomresseguier/visualens/"
+"Issues" = "https://github.com/tomresseguier/visualens/issues"
 
 [build-system]
 requires = ["setuptools>=61.0"]

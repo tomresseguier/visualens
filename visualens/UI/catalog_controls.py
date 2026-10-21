@@ -1,13 +1,16 @@
 import os
+from functools import partial
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (
-    QCheckBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton,
+    QVBoxLayout, QWidget,
 )
 
 from .color_picker import ColorControls
 from .controls import ControlBuilder
-from .ui_state import CatalogUIState
+from .ui_state import MARKER_CHOICES, CatalogUIState
 
 
 class CatalogControlsTab(QWidget) :
@@ -52,6 +55,7 @@ class CatalogControlsTab(QWidget) :
         top_row.addLayout(left_block, 1)
         top_row.addWidget(self.color_controls.disk, 0, Qt.AlignTop)
         layout.addLayout(top_row)
+        layout.addLayout(self._make_marker_row())
 
         colname_list = ControlBuilder.list_widget(colnames, 150, state.colname)
         colname_list.currentTextChanged.connect(self._on_colname_changed)
@@ -89,6 +93,54 @@ class CatalogControlsTab(QWidget) :
     # ------------------------------------------------------------------
     # Plotting options
     # ------------------------------------------------------------------
+    def _make_marker_row(self) :
+        """Marker drop-down, scale and linewidth boxes (arguments of ``cat.plot``) on a single line."""
+        state = self.state
+
+        marker_box = QComboBox()
+        marker_box.addItems(MARKER_CHOICES)
+        if state.marker not in MARKER_CHOICES :
+            marker_box.addItem(state.marker)
+        marker_box.setCurrentText(state.marker)
+        marker_box.currentTextChanged.connect(self._on_marker_changed)
+
+        self.scale_edit = self._make_number_edit(state.scale, 'scale')
+        self.linewidth_edit = self._make_number_edit(state.linewidth, 'linewidth')
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Marker'))
+        row.addWidget(marker_box, 2)
+        row.addWidget(QLabel('Scale'))
+        row.addWidget(self.scale_edit, 1)
+        row.addWidget(QLabel('Linewidth'))
+        row.addWidget(self.linewidth_edit, 1)
+        return row
+
+    def _make_number_edit(self, value, attr) :
+        edit = QLineEdit(f"{value:g}")
+        edit.setValidator(QDoubleValidator(0., 1e6, 6, edit))
+        edit.setMinimumWidth(30)
+        edit.editingFinished.connect(partial(self._on_number_edited, edit, attr))
+        return edit
+
+    def _on_marker_changed(self, marker) :
+        if not marker or marker == self.state.marker :
+            return
+        self.state.marker = marker
+        self.state.replot(self.cat)
+
+    def _on_number_edited(self, edit, attr) :
+        current = getattr(self.state, attr)
+        try :
+            value = float(edit.text().replace(',', '.'))
+        except ValueError :
+            value = current
+        edit.setText(f"{value:g}")
+        if value == current :
+            return
+        setattr(self.state, attr, value)
+        self.state.replot(self.cat)
+
     def _on_plot_toggled(self, checked) :
         self.state.plot = checked
         if checked :

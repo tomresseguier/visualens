@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from .utils_general import transform_rectangle, InRectangle, make_full_color
-from .drag_widgets import DragPlotWidget
+from .Special_QWidgets import DragPlotWidget
 
 ##############################################################################
 # Default color format is color = [R, G, B, contour opacity, inside opacity] #

@@ -4,8 +4,8 @@ import sys
 from astropy import units as u
 from astropy import constants as astro_constants
 #sys.path.append( os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/') )
-from ...utils.utils_astro.get_cosmology import get_cosmo
-cosmo = get_cosmo()
+from ...utils.utils_astro.get_default_cosmology import get_default_cosmology
+cosmo = get_default_cosmology()
 
 
 
@@ -57,3 +57,12 @@ def sigma0LENSTRONOMY_to_vdispLENSTOOL(sigma_0, rcore, rcut, zl, zs) :
     vdisp2 = vdisp2.to(u.km**2/u.s**2)
     return np.sqrt(vdisp2)
 
+
+def Sigma(R, rcore, rcut, vdisp) :
+    return 3/(4*astro_constants.G) * (rcore + rcut) / rcut * (1/np.sqrt(rcore**2 + R**2) - 1/np.sqrt(rcut**2 + R**2)) * vdisp**2
+
+def Mtot(rcore, rcut, vdisp) :
+    return 3*np.pi/(2*astro_constants.G) * (rcut**2 - rcore**2) / rcut * vdisp**2
+
+def vdisp(rcore, rcut, Mtot) :
+    return np.sqrt(2*astro_constants.G * Mtot * rcut / (3*np.pi * (rcut**2 - rcore**2)))

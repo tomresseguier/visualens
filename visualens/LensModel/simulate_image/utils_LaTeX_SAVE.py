@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from ...utils.utils_astro.utils_general import world_to_relative, arcsec_to_kpc
-from ...utils.utils_astro.get_cosmology import get_cosmo
+from ...utils.utils_astro.get_default_cosmology import get_default_cosmology
 
 
 
@@ -46,7 +46,7 @@ def make_lm_LaTeX(lm_instance, ref=None, use_parsecs=True, uncertainty='hpd', fl
     if uncertainty not in ('hpd', 'median'):
         raise ValueError(f"uncertainty must be 'hpd' or 'median', got {uncertainty!r}")
     
-    cosmo = get_cosmo()
+    cosmo = get_default_cosmology()
     z = lm_instance.imsim.z_source
     
     if flux_unit is None :

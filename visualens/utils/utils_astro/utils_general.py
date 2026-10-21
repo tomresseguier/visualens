@@ -5,8 +5,8 @@ import astropy.units as u
 from astropy import constants as astro_constants
 from astropy.coordinates import SkyCoord
 import matplotlib.pyplot as plt
-from .get_cosmology import get_cosmo
-cosmo = get_cosmo()
+from .get_default_cosmology import get_default_cosmology
+cosmo = get_default_cosmology()
 
 
 

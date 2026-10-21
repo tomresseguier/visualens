@@ -7,8 +7,8 @@ from lenstronomy.LensModel.lens_model import LensModel
 
 from ....utils.utils_astro.utils_general import world_to_relative
 from ....utils.utils_astro.utils_lensing import SigmaCrit
-#from ..utils.utils_astro.get_cosmology import get_cosmo
-#cosmo = get_cosmo()
+#from ..utils.utils_astro.get_default_cosmology import get_default_cosmology
+#cosmo = get_default_cosmology()
 
 
 def lenstool_ellipticity_to_lenstronomy_ellipticity(epsilon) :

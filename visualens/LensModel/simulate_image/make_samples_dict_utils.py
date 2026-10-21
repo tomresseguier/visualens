@@ -1,5 +1,9 @@
 import os
-import fcntl
+import platform
+if platform.system() == 'Windows':
+    import winfcntl as fcntl
+else:
+    import fcntl
 import pickle
 import numpy as np
 
@@ -32,14 +36,14 @@ def _validate_samples_dict(samples_dict, nsamples, lensing_columns, im_ids) :
 
 
 def _atomic_pickle_dump(obj, path) :
-    tmp_path = path + '.tmp'
+    tmp_path = f"{path}{'.tmp'}"
     with open(tmp_path, 'wb') as f :
         pickle.dump(obj, f)
     os.replace(tmp_path, path)
 
 
 def _load_or_init_samples_dict(samples_dict_path, nsamples, lensing_columns, im_ids, start_sample_index, stop_sample_index, recompute) :
-    lock_path = samples_dict_path + '.lock'
+    lock_path = f"{samples_dict_path}{'.lock'}"
     with open(lock_path, 'w') as lock_file :
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try :
@@ -63,7 +67,7 @@ def _load_or_init_samples_dict(samples_dict_path, nsamples, lensing_columns, im_
 
 
 def _merge_and_dump_samples_dict(samples_dict_path, local_dict, start_sample_index, stop_sample_index, nsamples, lensing_columns, im_ids) :
-    lock_path = samples_dict_path + '.lock'
+    lock_path = f"{samples_dict_path}{'.lock'}"
     with open(lock_path, 'w') as lock_file :
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try :

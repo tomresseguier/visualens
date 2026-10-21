@@ -1,25 +1,25 @@
 Metadata-Version: 2.4
 Name: visualens
-Version: 1.0.1
+Version: 1.0.3
 Summary: A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
 Author-email: Tom Resseguier <tresseg1@jhu.edu>
-Project-URL: Homepage, https://github.com/tomresseguier/Lenstool_GUI/
-Project-URL: Issues, https://github.com/tomresseguier/Lenstool_GUI/issues
-Requires-Python: >=3.8
+Project-URL: Homepage, https://github.com/tomresseguier/visualens/
+Project-URL: Issues, https://github.com/tomresseguier/visualens/issues
+Requires-Python: >=3.9
 Description-Content-Type: text/markdown
-Requires-Dist: numpy>=1.21
-Requires-Dist: astropy>=5.0
-Requires-Dist: matplotlib>=3.5
-Requires-Dist: PyQt5>=5.15
-Requires-Dist: pyqtgraph>=0.12
-Requires-Dist: scipy>=1.7
-Requires-Dist: pandas>=1.4
-Requires-Dist: tqdm>=4.60
-Requires-Dist: corner>=2.2
-Requires-Dist: lenstronomy>=1.1
-Requires-Dist: reproject
+Requires-Dist: numpy<3,>=1.21
+Requires-Dist: scipy<2,>=1.7
+Requires-Dist: astropy<9,>=5.0
+Requires-Dist: pandas<4,>=1.4
+Requires-Dist: matplotlib<4,>=3.5
+Requires-Dist: PyQt5<6,>=5.15
+Requires-Dist: pyqtgraph<0.15,>=0.13.3
+Requires-Dist: tqdm<5,>=4.60
+Requires-Dist: corner<3,>=2.2
+Requires-Dist: lenstronomy<2,>=1.11
+Requires-Dist: reproject<1,>=0.9
 
-# visualens
+# **visualens**
 
 ### A visual, fast interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
 
@@ -38,29 +38,32 @@ Some IDEs like Spyder may cause conflicts with PyQt. We suggest installing your 
 
 **Installation steps:**
 
-> `conda create -n visualens_env -c conda-forge lenstool lenstronomy python==3.12.2`
-
-> `conda activate visualens_env`
-
-> `pip install visualens`
+> ```
+> conda create -n visualens_env -c conda-forge lenstool lenstronomy python==3.12.2
+> conda activate visualens_env
+> pip install visualens
+> ```
 
 ---
 
 ### Starting guide:
 
 If using Jupyter notebooks, run these lines in your first cell:
+> ```python
 > %gui qt5
 > from PyQt5.QtWidgets import QApplication
 > import sys
 > app = QApplication.instance()
 > if app is None:
 >     app = QApplication(sys.argv)
-
+> ```
 Then
+> ```python
 > from visualens import Visualens
 > vl = Visualens()
+> ```
 
-A window should open, with a side panel accessible by clicking the top left button. Click "Open..." under the Image, Catalog, or Lens model tab to get started.
+***A window should open, with a side panel accessible by clicking the top left button. Click "Open..." under the Image, Catalog, or Lens model tab to get started.***
 
-More example to come here:
-https://github.com/tomresseguier/Lenstool_GUI/tree/main/examples
+More examples here:
+https://github.com/tomresseguier/visualens/tree/main/examples

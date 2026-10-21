@@ -384,7 +384,8 @@ class Catalog :
     def make_path(self, path, ref_path, name) :
         if path is None :#and self.ref_path is not None :
             #to_return = os.path.join(os.path.dirname(ref_path), name)
-            to_return = os.path.join(os.path.dirname(ref_path), os.path.basename(ref_path).split('.')[0] + '_' + name)
+            ref_stem = os.path.splitext(os.path.basename(ref_path))[0]
+            to_return = os.path.join(os.path.dirname(ref_path), f"{ref_stem}_{name}")
         elif os.path.isdir(path) :
             to_return = os.path.join(path, name)
         elif os.path.isdir(os.path.dirname(path)) :

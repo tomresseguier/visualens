@@ -5,8 +5,8 @@ from matplotlib.colors import hsv_to_rgb
 from matplotlib.patches import FancyArrow
 from astropy.wcs import WCS
 import corner
-from ..utils_astro.get_cosmology import get_cosmo
-cosmo = get_cosmo()
+from ..utils_astro.get_default_cosmology import get_default_cosmology
+cosmo = get_default_cosmology()
 
 
 def make_palette(hue_range=None, sat_range=None, hue_fixed=None, sat_fixed=None, alpha=[1,0]) :

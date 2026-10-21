@@ -1,8 +1,30 @@
 import colorsys
+import inspect
 from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+
+
+ELLIPSE_MARKER = 'ellipse'
+MARKER_CHOICES = (ELLIPSE_MARKER, 'o', '+', 'x', 's')
+
+
+def _plot_defaults(cat) :
+    """Default marker / scale / linewidth of ``cat.plot`` (they differ between catalog kinds)."""
+    try :
+        params = inspect.signature(cat.plot).parameters
+    except (TypeError, ValueError) :
+        params = {}
+    def default(name, fallback) :
+        param = params.get(name)
+        return fallback if param is None or param.default is inspect.Parameter.empty else param.default
+    marker = default('marker', None)
+    return dict(
+        marker=ELLIPSE_MARKER if marker is None else marker,
+        scale=float(default('scale', 1.)),
+        linewidth=float(default('linewidth', 3.)),
+    )
 
 
 @dataclass
@@ -25,6 +47,9 @@ class CatalogUIState :
     v : float = 0.
     opacity : float = 1.
     default_color : list = field(default_factory=lambda : [0., 1., 1., 1., 0.])
+    marker : str = ELLIPSE_MARKER   # one of MARKER_CHOICES; ELLIPSE_MARKER means marker=None in ``cat.plot``
+    scale : float = 1.
+    linewidth : float = 3.
 
     _ATTR = '_plot_ui_state'
 
@@ -41,6 +66,7 @@ class CatalogUIState :
             default_color = [float(channel) for channel in cat.color]
             h, s, v = colorsys.rgb_to_hsv(*default_color[:3])
             opacity = default_color[3] if len(default_color)>3 else 1.
+            defaults = {**_plot_defaults(cat), **defaults}
             state = cls(h=h, s=s, v=v, opacity=opacity, default_color=default_color, **defaults)
             setattr(cat, cls._ATTR, state)
         return state
@@ -85,6 +111,9 @@ class CatalogUIState :
         is passed explicitly so that it also overrides such palettes.
         """
         self.apply_color_to(cat)
+        plot_kwargs.setdefault('marker', None if self.marker == ELLIPSE_MARKER else self.marker)
+        plot_kwargs.setdefault('scale', self.scale)
+        plot_kwargs.setdefault('linewidth', self.linewidth)
         if not self.use_default_color :
             plot_kwargs.setdefault('color', np.array(cat.color, dtype=float))
         if self.plot :

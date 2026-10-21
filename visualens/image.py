@@ -23,12 +23,13 @@ from astropy.table import Table
 from .catalog import Catalog
 from .source_extraction.source_extract import source_extract, source_extract_DIM
 from .utils.utils_fits.utils_fits_image import open_image, make_default_wcs, create_empty_image
+from .utils.utils_general.utils_general import derived_path, hst_wht_fits_path
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
-from .utils.utils_Qt.drag_widgets import DragWidget
+from .utils.utils_Qt.Special_QWidgets import DragWidget
 from .utils.utils_Qt.utils_general import *
-from .utils.utils_astro.get_cosmology import get_cosmo
-from .utils.utils_Qt.ImageView_custom_selector import ImageView_custom_selector
+from .utils.utils_astro.get_default_cosmology import get_default_cosmology
+from .utils.utils_Qt.Special_ImageViews import ImageView_custom_selector
 
 
 
@@ -70,15 +71,16 @@ class Image :
         self.workspace = workspace
 
         if self.image_path is not None :
-            if os.path.isfile(self.image_path[:-8] + 'wht.fits') :
-                print("Weight file found: " + self.image_path[:-8] + 'wht.fits')
-                self.weight_path = self.image_path[:-8] + 'wht.fits'
+            weight_path = hst_wht_fits_path(self.image_path)
+            if weight_path is not None and os.path.isfile(weight_path) :
+                print("Weight file found: " + weight_path)
+                self.weight_path = weight_path
             else :
                 self.weight_path = None
 
             self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = open_image(self.image_path)
 
-            self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
+            self.boosted_image_path = derived_path(self.image_path, '_boosted')
             if os.path.isfile(self.boosted_image_path) :
                 print("Boosted image found: " + self.boosted_image_path)
                 self.boosted_image, _, _, _, _ = open_image(self.boosted_image_path)
@@ -113,18 +115,21 @@ class Image :
         self._split4_extra_views = []
         if self.orientation==None :
             self.orientation = 0.
-        self.cosmo = get_cosmo()
+        self.cosmo = get_default_cosmology()
 
         if plot_image :
             self.plot_image()
         self.filters = None
 
     def _window_title(self) :
+        lens_model = getattr(self.workspace, 'lens_model', None) if self.workspace is not None else None
+        if lens_model is not None and getattr(lens_model, 'model_dir', None) :
+            return os.path.basename(os.path.normpath(lens_model.model_dir))
         return os.path.basename(self.image_path) if self.image_path is not None else 'Empty image'
     
     
     def set_cosmo(self, cosmo_name) :
-        self.cosmo = get_cosmo(cosmo_name)
+        self.cosmo = get_default_cosmology(cosmo_name)
     
     def _make_floating_toggle_button(self, drag_widget, label, corner, callback, margin=8, x_margin=None, y_margin=None) :
         toggle_btn = QPushButton(label)
@@ -160,10 +165,10 @@ class Image :
     def _make_histogram_toggle_button(self, drag_widget, image_view) :
         return self._make_floating_toggle_button(
             drag_widget,
-            'H',
+            '<',
             'top-right',
             lambda : self._toggle_right_side_bar_for(image_view),
-            x_margin=60,
+            x_margin=40,
             y_margin=8,
         )
 
@@ -340,9 +345,9 @@ class Image :
                 image_path = self.image_path
                 weight_path = self.weight_path
                 
-            out_dir = os.path.join( os.path.dirname(image_path), 'source_extraction/' )
+            out_dir = os.path.join(os.path.dirname(image_path), 'source_extraction')
             if not os.path.exists(out_dir) :
-                os.mkdir(out_dir)
+                os.makedirs(out_dir, exist_ok=True)
             
             outfile_name = 'SExtractor_cat.fits' if DIM_ref_path is None else 'SExtractor_cat_DIM.fits'
             out_path = os.path.join( out_dir, outfile_name )
@@ -396,7 +401,7 @@ class Image :
             return str(len(self.sources.cat)) + ' sources found.'
     
     def reproject(self, ref_image_path, image_path) :
-        reprojected_image_path = image_path[:-len('.fits')] + '_reprojected.fits'
+        reprojected_image_path = derived_path(image_path, '_reprojected')
         if os.path.isfile(reprojected_image_path) :
             print('Previous reprojected image found.')
         else :
@@ -508,7 +513,7 @@ class Image :
             except ValueError :
                 pass
 
-        out_path = self.image_path[:-5] + '_rotated.fits'
+        out_path = derived_path(self.image_path, '_rotated')
         if is_rgb :
             hdul = fits.HDUList(
                 [fits.PrimaryHDU()] +
@@ -530,7 +535,7 @@ class Image :
                                            wcs_out.pixel_scale_matrix[0, 1]**2))
         self.boosted_image = None
         self.boosted = False
-        self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
+        self.boosted_image_path = derived_path(self.image_path, '_boosted')
 
         to_plot = np.flip(self.image_data, axis=0)
         if self.ImageView is not None :

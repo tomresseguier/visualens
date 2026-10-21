@@ -1,6 +1,6 @@
 import numpy as np
 from ...utils.utils_Qt.utils_general import transform_ROI_params
-from ...utils.utils_Qt.drag_widgets import _roi_link_box_slider
+from ...utils.utils_Qt.Special_QWidgets import _roi_link_box_slider
 from lenstronomy.Sampling.parameters import Param
 from lenstronomy.LensModel.lens_model import LensModel
 

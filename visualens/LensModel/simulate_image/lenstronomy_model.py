@@ -15,7 +15,7 @@ from lenstronomy.Data.pixel_grid import PixelGrid
 from lenstronomy.Util import param_util
         
 from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
-from ...utils.utils_Qt.drag_widgets import (
+from ...utils.utils_Qt.Special_QWidgets import (
     SelectableCircleROI,
     SelectableEllipseROI,
     attach_sliders,
@@ -433,7 +433,7 @@ class lenstronomy_model :
         self.to_local()
 
 
-    def save(self, path='./lenstronomy_model.pkl') :
+    def save(self, path='lenstronomy_model.pkl') :
         #if os.path.exists(path) :
         #    with open(path, 'rb') as file :
         #        existing_model = pickle.load(file)
@@ -455,7 +455,7 @@ class lenstronomy_model :
         print('Model saved at ' + path)
 
 
-    def load_lm(self, path='./lenstronomy_model.pkl') :
+    def load_lm(self, path='lenstronomy_model.pkl') :
         path = make_model_path(path)
         if os.path.exists(path) :
             print('Source model found at: ' + path)
@@ -935,9 +935,10 @@ class lenstronomy_model :
 
 
 def make_model_path(path) :
-    if not os.path.isdir( os.path.dirname(path) ) :
-        path = os.path.join('./', path)
-        extension = '.pkl'
-        if not extension in path :
-            path += extension
+    dirname = os.path.dirname(path)
+    if not dirname or not os.path.isdir(dirname) :
+        path = os.path.join(os.curdir, path)
+    base, ext = os.path.splitext(path)
+    if not ext :
+        path = f"{base}.pkl"
     return path

@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout
+from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QPushButton
 from PyQt5.QtCore import Qt, QTimer, QPointF
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore
@@ -274,6 +274,71 @@ class ThrottledPlotWidget(pg.PlotWidget) :
                 self._wheel_delta = 0
                 
             self._stop_timer = True
+
+
+class PlotWidget_xyZooming(pg.PlotWidget) :
+    """
+    PlotWidget where the mouse wheel zooms only the y-axis, and Shift + mouse wheel zooms only the x-axis.
+    """
+    def __init__(self, *args, zoom_factor=1.15, **kwargs) :
+        super().__init__(*args, **kwargs)
+        self._zoom_factor = zoom_factor
+
+        self.x_log_button = QPushButton("x log scale", self)
+        self.y_log_button = QPushButton("y log scale", self)
+        for button in (self.x_log_button, self.y_log_button) :
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(22)
+            button.toggled.connect(self._update_log_mode)
+            button.show()
+            button.raise_()
+        self._reposition_log_buttons()
+
+    def _update_log_mode(self, *_) :
+        self.getPlotItem().setLogMode(x=self.x_log_button.isChecked(), y=self.y_log_button.isChecked())
+        self.getViewBox().autoRange()
+
+    def set_log_mode(self, x=None, y=None) :
+        """Programmatically set log scale on the x and/or y axis (None leaves an axis unchanged)."""
+        if x is not None :
+            self.x_log_button.setChecked(bool(x))
+        if y is not None :
+            self.y_log_button.setChecked(bool(y))
+
+    def _reposition_log_buttons(self) :
+        if 'y_log_button' not in self.__dict__ :
+            return
+        margin = 6
+        x = margin
+        for button in (self.x_log_button, self.y_log_button) :
+            button.adjustSize()
+            button.move(x, margin)
+            button.raise_()
+            x += button.width() + margin
+
+    def resizeEvent(self, ev) :
+        if ev is not None :
+            super().resizeEvent(ev)
+        self._reposition_log_buttons()
+
+    def wheelEvent(self, ev) :
+        # Qt may report the wheel delta on the x component when Shift is held (e.g. on macOS)
+        angle = ev.angleDelta()
+        pixel = ev.pixelDelta()
+        delta = angle.y() or angle.x() or pixel.y() or pixel.x()
+        if delta == 0 :
+            ev.ignore()
+            return
+
+        scale = self._zoom_factor**(delta / 120.)
+        shift_held = bool(ev.modifiers() & Qt.ShiftModifier)
+        factors = (1 / scale, 1.) if shift_held else (1., 1 / scale)
+
+        vb = self.getViewBox()
+        center = vb.mapSceneToView(ev.position())
+        vb.scaleBy(factors, center=center)
+        ev.accept()
 
 
 class DragPlotWidget_special(ThrottledPlotWidget):
