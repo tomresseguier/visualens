@@ -1,12 +1,13 @@
 [project]
 name = "visualens"
-version = "1.0.3"
+version = "1.0.4"
 authors = [
   { name="Tom Resseguier", email="tresseg1@jhu.edu" },
 ]
+license = "BSD-3-Clause"
 description = "A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = "==3.12.*"
 # External (non-pip) requirement: the `lenstool` executable (e.g. `conda install -c conda-forge lenstool`).
 dependencies = [
   "numpy>=1.21,<3",
@@ -29,3 +30,9 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]
+visualens = "visualens.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7,<9"]

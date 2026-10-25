@@ -9,3 +9,6 @@ tqdm<5,>=4.60
 corner<3,>=2.2
 lenstronomy<2,>=1.11
 reproject<1,>=0.9
+
+[test]
+pytest<9,>=7

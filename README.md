@@ -18,7 +18,7 @@ Some IDEs like Spyder may cause conflicts with PyQt. We suggest installing your 
 **Installation steps:**
 
 > ```
-> conda create -n visualens_env -c conda-forge lenstool lenstronomy python==3.12.2
+> conda create -n visualens_env -c conda-forge lenstool astropy matplotlib ipykernel ipywidgets ipyevents lenstronomy python==3.12.15
 > conda activate visualens_env
 > pip install visualens
 > ```

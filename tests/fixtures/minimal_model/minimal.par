@@ -1,0 +1,16 @@
+runmode
+	 reference 3 47.2332780 26.7604953
+	 end
+potentiel P01
+	 profile 81
+	 x_centre 0.0
+	 y_centre 0.0
+	 z_lens 0.356
+	 ellipticite 0.0
+	 angle_pos 0.0
+	 core_radius_kpc 30
+	 cut_radius_kpc 1500
+	 v_disp 600
+	 identity P01
+	 end
+fini
